@@ -8,22 +8,43 @@ from google.cloud import storage
 
 HREF_PATTERN = re.compile(r'href=["\'](\d+)\.html["\']', re.IGNORECASE)
 
+def download_with_retry(blob, max_retries=5):
+    for attempt in range(max_retries):
+        try:
+            return blob.download_as_text(timeout=60)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            time.sleep(1 + attempt)
+
 def load_graph_from_gcs(bucket_name, prefix="files/"):
+    print(f"Connecting to bucket '{bucket_name}'...")
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     
-    blobs = [b for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".html")]
+    blobs = []
+    for attempt in range(5):
+        try:
+            iterator = bucket.list_blobs(prefix=prefix, timeout=300, projection="noAcl")
+            blobs = [b for b in iterator if b.name.endswith(".html")]
+            break
+        except Exception as e:
+            print(f"  Listing retry {attempt + 1}/5 due to: {e}")
+            time.sleep(2 ** attempt)
+
     n = len(blobs)
     if n == 0:
         raise ValueError(f"No .html files found in gs://{bucket_name}/{prefix}")
-            
+        
+    print(f"Found {n} files. Beginning sequential single-threaded ingestion...\n")
+    
     out_edges = [set() for _ in range(n)]
     in_edges = [set() for _ in range(n)]
     
     t_start = time.perf_counter()
     for idx, b in enumerate(blobs):
         src = int(b.name.split("/")[-1].replace(".html", ""))
-        content = b.download_as_text()
+        content = download_with_retry(b)
         
         for m in HREF_PATTERN.findall(content):
             target = int(m)
@@ -34,6 +55,7 @@ def load_graph_from_gcs(bucket_name, prefix="files/"):
         if (idx + 1) % 1000 == 0 or (idx + 1) == n:
             elapsed = time.perf_counter() - t_start
             rate = (idx + 1) / elapsed
+            print(f"  [I/O Progress] Downloaded {idx + 1:5d}/{n} files ({rate:.1f} files/sec, {elapsed:.1f}s elapsed)")
             
     out_edges_list = [list(e) for e in out_edges]
     in_edges_list = [list(e) for e in in_edges]
