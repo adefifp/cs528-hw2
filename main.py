@@ -9,18 +9,14 @@ from google.cloud import storage
 HREF_PATTERN = re.compile(r'href=["\'](\d+)\.html["\']', re.IGNORECASE)
 
 def load_graph_from_gcs(bucket_name, prefix="files/"):
-    print(f"Connecting to bucket '{bucket_name}'...")
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     
-    print("Listing files in bucket...")
     blobs = [b for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".html")]
     n = len(blobs)
     if n == 0:
         raise ValueError(f"No .html files found in gs://{bucket_name}/{prefix}")
-        
-    print(f"Found {n} files. Beginning sequential single-threaded ingestion...\n")
-    
+            
     out_edges = [set() for _ in range(n)]
     in_edges = [set() for _ in range(n)]
     
@@ -38,7 +34,6 @@ def load_graph_from_gcs(bucket_name, prefix="files/"):
         if (idx + 1) % 1000 == 0 or (idx + 1) == n:
             elapsed = time.perf_counter() - t_start
             rate = (idx + 1) / elapsed
-            print(f"  [I/O Progress] Downloaded {idx + 1:5d}/{n} files ({rate:.1f} files/sec, {elapsed:.1f}s elapsed)")
             
     out_edges_list = [list(e) for e in out_edges]
     in_edges_list = [list(e) for e in in_edges]
@@ -53,7 +48,7 @@ def compute_degree_stats(degrees, label):
     
     quintiles = [data[int(math.ceil(p * n)) - 1] for p in (0.2, 0.4, 0.6, 0.8)]
     
-    print(f"\n--- {label} Distribution ---")
+    print(f"\n{label} Distribution")
     print(f"Min: {min_val} | Max: {max_val} | Average: {avg_val:.2f} | Median: {med_val}")
     print(f"Quintiles (20%, 40%, 60%, 80%): {quintiles}")
 
@@ -63,7 +58,7 @@ def run_pagerank(n, out_edges, in_edges, damping=0.85, threshold=0.005):
     out_degrees = [len(e) for e in out_edges]
     
     iteration = 0
-    print("\nRunning iterative PageRank...")
+    print("\nIterative PageRank")
     while True:
         iteration += 1
         new_pr = [0.0] * n
@@ -88,7 +83,6 @@ def compute_closeness_centrality(n, out_edges):
     best_node = -1
     best_score = -1.0
     
-    print(f"\nComputing Closeness Centrality across {n} nodes (single-threaded BFS)...")
     t_start = time.perf_counter()
     
     for src in range(n):
